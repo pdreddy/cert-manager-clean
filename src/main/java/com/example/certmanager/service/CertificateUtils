@@ -1,0 +1,34 @@
+import com.nimbusds.jose.jwk.*;
+import com.nimbusds.jose.util.Base64URL;
+
+public class CertificateUtils {
+
+    public static Map<String, Object> extractMetadata(String pemCert) throws Exception {
+        pemCert = pemCert
+                .replace("-----BEGIN CERTIFICATE-----", "")
+                .replace("-----END CERTIFICATE-----", "")
+                .replaceAll("\\s+", "");
+        byte[] decoded = java.util.Base64.getDecoder().decode(pemCert);
+
+        CertificateFactory factory = CertificateFactory.getInstance("X.509");
+        X509Certificate cert = (X509Certificate) factory.generateCertificate(new ByteArrayInputStream(decoded));
+
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("beginDate", cert.getNotBefore());
+        metadata.put("expiryDate", cert.getNotAfter());
+
+        // Convert public key to JSONWebKey (JWK)
+        PublicKey publicKey = cert.getPublicKey();
+        if (publicKey instanceof RSAPublicKey rsaPublicKey) {
+            RSAKey jwk = new RSAKey.Builder(rsaPublicKey)
+                    .keyUse(KeyUse.SIGNATURE)
+                    .keyID(UUID.randomUUID().toString())
+                    .build();
+            metadata.put("jwk", jwk.toJSONString()); // <-- Single JWK as JSON
+        } else {
+            throw new IllegalArgumentException("Unsupported key type: " + publicKey.getAlgorithm());
+        }
+
+        return metadata;
+    }
+}
