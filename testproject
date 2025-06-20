@@ -1,0 +1,734 @@
+
+// pom.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.0</version>
+        <relativePath/>
+    </parent>
+    <groupId>com.damu</groupId>
+    <artifactId>certificate-manager</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>certificate-manager</name>
+    <description>Certificate Management Application with ElastiCache</description>
+    <properties>
+        <java.version>17</java.version>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+    </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+
+// src/main/java/com/damu/certificatemanager/CertificateManagerApplication.java
+package com.damu.certificatemanager;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cache.annotation.EnableCaching;
+
+@SpringBootApplication
+@EnableCaching
+public class CertificateManagerApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(CertificateManagerApplication.class, args);
+    }
+}
+
+// src/main/java/com/damu/certificatemanager/entity/Certificate.java
+package com.damu.certificatemanager.entity;
+
+import jakarta.persistence.*;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "certificates")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class Certificate {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @NotBlank(message = "Client ID is required")
+    @Column(name = "client_id", nullable = false)
+    private String clientId;
+    
+    @NotBlank(message = "Serial number is required")
+    @Column(name = "serial_number", nullable = false)
+    private String serialNumber;
+    
+    @Column(name = "subject")
+    private String subject;
+    
+    @Column(name = "issuer")
+    private String issuer;
+    
+    @NotNull(message = "Start date is required")
+    @Column(name = "start_date")
+    private LocalDateTime startDate;
+    
+    @NotNull(message = "Expiry date is required")
+    @Column(name = "expiry_date")
+    private LocalDateTime expiryDate;
+    
+    @Column(name = "algorithm")
+    private String algorithm;
+    
+    @Column(name = "version")
+    private Integer version;
+    
+    @Column(name = "cert_text", columnDefinition = "CLOB")
+    private String certText;
+    
+    @Column(name = "fingerprint")
+    private String fingerprint;
+    
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
+    
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    // Custom constructor for service layer
+    public Certificate(String clientId, String serialNumber, String subject, String issuer, 
+                      LocalDateTime startDate, LocalDateTime expiryDate, String algorithm, 
+                      Integer version, String certText, String fingerprint) {
+        this.clientId = clientId;
+        this.serialNumber = serialNumber;
+        this.subject = subject;
+        this.issuer = issuer;
+        this.startDate = startDate;
+        this.expiryDate = expiryDate;
+        this.algorithm = algorithm;
+        this.version = version;
+        this.certText = certText;
+        this.fingerprint = fingerprint;
+        this.createdAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    @PrePersist
+    public void prePersist() {
+        this.createdAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    public void preUpdate() {
+        this.updatedAt = LocalDateTime.now();
+    }
+}
+
+// src/main/java/com/damu/certificatemanager/dto/CertificateRequest.java
+package com.damu.certificatemanager.dto;
+
+import jakarta.validation.constraints.NotBlank;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class CertificateRequest {
+    
+    @NotBlank(message = "Client ID is required")
+    private String clientId;
+    
+    @NotBlank(message = "Certificate text is required")
+    private String certText;
+}
+
+// src/main/java/com/damu/certificatemanager/dto/CertificateResponse.java
+package com.damu.certificatemanager.dto;
+
+import com.damu.certificatemanager.entity.Certificate;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import java.time.LocalDateTime;
+
+@Data
+@NoArgsConstructor
+public class CertificateResponse {
+    private Long id;
+    private String clientId;
+    private String serialNumber;
+    private String subject;
+    private String issuer;
+    private LocalDateTime startDate;
+    private LocalDateTime expiryDate;
+    private String algorithm;
+    private Integer version;
+    private String fingerprint;
+    private LocalDateTime createdAt;
+
+    // Constructor from Entity
+    public CertificateResponse(Certificate certificate) {
+        this.id = certificate.getId();
+        this.clientId = certificate.getClientId();
+        this.serialNumber = certificate.getSerialNumber();
+        this.subject = certificate.getSubject();
+        this.issuer = certificate.getIssuer();
+        this.startDate = certificate.getStartDate();
+        this.expiryDate = certificate.getExpiryDate();
+        this.algorithm = certificate.getAlgorithm();
+        this.version = certificate.getVersion();
+        this.fingerprint = certificate.getFingerprint();
+        this.createdAt = certificate.getCreatedAt();
+    }
+}
+
+// src/main/java/com/damu/certificatemanager/repository/CertificateRepository.java
+package com.damu.certificatemanager.repository;
+
+import com.damu.certificatemanager.entity.Certificate;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public interface CertificateRepository extends JpaRepository<Certificate, Long> {
+    
+    List<Certificate> findByClientId(String clientId);
+    
+    @Query("SELECT c FROM Certificate c WHERE c.clientId = :clientId AND c.certText = :certText")
+    Optional<Certificate> findByClientIdAndCertText(@Param("clientId") String clientId, 
+                                                   @Param("certText") String certText);
+    
+    List<Certificate> findByClientIdOrderByCreatedAtDesc(String clientId);
+    
+    Optional<Certificate> findBySerialNumber(String serialNumber);
+    
+    boolean existsByClientIdAndSerialNumber(String clientId, String serialNumber);
+}
+
+// src/main/java/com/damu/certificatemanager/service/CertificateService.java
+package com.damu.certificatemanager.service;
+
+import com.damu.certificatemanager.dto.CertificateRequest;
+import com.damu.certificatemanager.dto.CertificateResponse;
+import com.damu.certificatemanager.entity.Certificate;
+import com.damu.certificatemanager.repository.CertificateRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.io.ByteArrayInputStream;
+import java.security.MessageDigest;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Base64;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+
+@Service
+@Transactional
+@Slf4j
+public class CertificateService {
+
+    @Autowired
+    private CertificateRepository certificateRepository;
+
+    @Autowired
+    @Qualifier("masterRedisTemplate")
+    private RedisTemplate<String, String> masterRedisTemplate;
+
+    @Autowired
+    @Qualifier("replicaRedisTemplate")
+    private RedisTemplate<String, String> replicaRedisTemplate;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    private static final String CACHE_PREFIX = "cert:";
+    private static final long CACHE_TIMEOUT = 24; // hours
+
+    public CertificateResponse saveCertificate(CertificateRequest request) {
+        try {
+            // Parse certificate
+            X509Certificate x509Cert = parseCertificate(request.getCertText());
+            
+            // Extract certificate information
+            String serialNumber = x509Cert.getSerialNumber().toString();
+            String subject = x509Cert.getSubjectDN().toString();
+            String issuer = x509Cert.getIssuerDN().toString();
+            LocalDateTime startDate = x509Cert.getNotBefore().toInstant()
+                .atZone(ZoneId.systemDefault()).toLocalDateTime();
+            LocalDateTime expiryDate = x509Cert.getNotAfter().toInstant()
+                .atZone(ZoneId.systemDefault()).toLocalDateTime();
+            String algorithm = x509Cert.getSigAlgName();
+            Integer version = x509Cert.getVersion();
+            String fingerprint = generateFingerprint(x509Cert.getEncoded());
+
+            // Check if certificate already exists
+            if (certificateRepository.existsByClientIdAndSerialNumber(request.getClientId(), serialNumber)) {
+                throw new RuntimeException("Certificate already exists for this client");
+            }
+
+            // Create and save certificate entity
+            Certificate certificate = new Certificate(
+                request.getClientId(),
+                serialNumber,
+                subject,
+                issuer,
+                startDate,
+                expiryDate,
+                algorithm,
+                version,
+                request.getCertText(),
+                fingerprint
+            );
+
+            Certificate savedCert = certificateRepository.save(certificate);
+            log.info("Certificate saved successfully for client: {} with serial: {}", 
+                    request.getClientId(), serialNumber);
+
+            // Cache the certificate
+            cacheCertificate(savedCert);
+
+            return new CertificateResponse(savedCert);
+
+        } catch (Exception e) {
+            log.error("Failed to process certificate for client: {}", request.getClientId(), e);
+            throw new RuntimeException("Failed to process certificate: " + e.getMessage(), e);
+        }
+    }
+
+    public List<CertificateResponse> getCertificatesByClientId(String clientId) {
+        // Try to get from cache first (using replica)
+        String cacheKey = CACHE_PREFIX + "client:" + clientId;
+        String cachedData = replicaRedisTemplate.opsForValue().get(cacheKey);
+        
+        if (cachedData != null) {
+            try {
+                List<Certificate> certificates = objectMapper.readValue(cachedData, 
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, Certificate.class));
+                log.debug("Retrieved {} certificates from cache for client: {}", certificates.size(), clientId);
+                return certificates.stream()
+                    .map(CertificateResponse::new)
+                    .collect(Collectors.toList());
+            } catch (JsonProcessingException e) {
+                log.error("Failed to deserialize cached data for client: {}", clientId, e);
+            }
+        }
+
+        // Get from database
+        List<Certificate> certificates = certificateRepository.findByClientIdOrderByCreatedAtDesc(clientId);
+        log.info("Retrieved {} certificates from database for client: {}", certificates.size(), clientId);
+        
+        // Cache the result (using master)
+        try {
+            String dataToCache = objectMapper.writeValueAsString(certificates);
+            masterRedisTemplate.opsForValue().set(cacheKey, dataToCache, CACHE_TIMEOUT, TimeUnit.HOURS);
+            log.debug("Cached certificates for client: {}", clientId);
+        } catch (JsonProcessingException e) {
+            log.error("Failed to cache data for client: {}", clientId, e);
+        }
+
+        return certificates.stream()
+            .map(CertificateResponse::new)
+            .collect(Collectors.toList());
+    }
+
+    public Optional<CertificateResponse> getCertificateByClientIdAndCertText(String clientId, String certText) {
+        String cacheKey = CACHE_PREFIX + "lookup:" + clientId + ":" + certText.hashCode();
+        String cachedData = replicaRedisTemplate.opsForValue().get(cacheKey);
+        
+        if (cachedData != null) {
+            try {
+                Certificate certificate = objectMapper.readValue(cachedData, Certificate.class);
+                log.debug("Retrieved certificate from cache for client: {}", clientId);
+                return Optional.of(new CertificateResponse(certificate));
+            } catch (JsonProcessingException e) {
+                log.error("Failed to deserialize cached certificate for client: {}", clientId, e);
+            }
+        }
+
+        Optional<Certificate> certificate = certificateRepository
+            .findByClientIdAndCertText(clientId, certText);
+        
+        if (certificate.isPresent()) {
+            log.info("Found certificate in database for client: {}", clientId);
+            // Cache the certificate
+            cacheCertificate(certificate.get());
+            return Optional.of(new CertificateResponse(certificate.get()));
+        }
+        
+        log.warn("Certificate not found for client: {}", clientId);
+        return Optional.empty();
+    }
+
+    public void deleteCertificate(Long id) {
+        Optional<Certificate> certificate = certificateRepository.findById(id);
+        if (certificate.isPresent()) {
+            Certificate cert = certificate.get();
+            
+            // Remove from cache
+            String clientCacheKey = CACHE_PREFIX + "client:" + cert.getClientId();
+            String lookupCacheKey = CACHE_PREFIX + "lookup:" + cert.getClientId() + ":" + cert.getCertText().hashCode();
+            
+            masterRedisTemplate.delete(clientCacheKey);
+            masterRedisTemplate.delete(lookupCacheKey);
+            
+            // Delete from database
+            certificateRepository.deleteById(id);
+            log.info("Certificate deleted successfully for id: {}", id);
+        } else {
+            log.warn("Certificate not found for deletion with id: {}", id);
+        }
+    }
+
+    private X509Certificate parseCertificate(String certText) throws Exception {
+        // Remove headers and whitespace
+        String cleanCert = certText
+            .replace("-----BEGIN CERTIFICATE-----", "")
+            .replace("-----END CERTIFICATE-----", "")
+            .replaceAll("\\s", "");
+
+        byte[] certBytes = Base64.getDecoder().decode(cleanCert);
+        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+        return (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(certBytes));
+    }
+
+    private String generateFingerprint(byte[] certBytes) throws Exception {
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        byte[] digest = md.digest(certBytes);
+        StringBuilder sb = new StringBuilder();
+        for (byte b : digest) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
+    private void cacheCertificate(Certificate certificate) {
+        try {
+            String clientCacheKey = CACHE_PREFIX + "client:" + certificate.getClientId();
+            String lookupCacheKey = CACHE_PREFIX + "lookup:" + certificate.getClientId() + ":" + certificate.getCertText().hashCode();
+            
+            String certData = objectMapper.writeValueAsString(certificate);
+            masterRedisTemplate.opsForValue().set(lookupCacheKey, certData, CACHE_TIMEOUT, TimeUnit.HOURS);
+            
+            // Invalidate client list cache to ensure consistency
+            masterRedisTemplate.delete(clientCacheKey);
+            log.debug("Cached certificate for client: {}", certificate.getClientId());
+            
+        } catch (JsonProcessingException e) {
+            log.error("Failed to cache certificate for client: {}", certificate.getClientId(), e);
+        }
+    }
+}
+
+// src/main/java/com/damu/certificatemanager/controller/CertificateController.java
+package com.damu.certificatemanager.controller;
+
+import com.damu.certificatemanager.dto.CertificateRequest;
+import com.damu.certificatemanager.dto.CertificateResponse;
+import com.damu.certificatemanager.service.CertificateService;
+import jakarta.validation.Valid;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Optional;
+
+@RestController
+@RequestMapping("/api/certificates")
+@CrossOrigin(origins = "*")
+@Slf4j
+public class CertificateController {
+
+    @Autowired
+    private CertificateService certificateService;
+
+    @PostMapping
+    public ResponseEntity<?> saveCertificate(@Valid @RequestBody CertificateRequest request) {
+        try {
+            log.info("Received request to save certificate for client: {}", request.getClientId());
+            CertificateResponse response = certificateService.saveCertificate(request);
+            return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        } catch (Exception e) {
+            log.error("Error processing certificate for client: {}", request.getClientId(), e);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body("Error processing certificate: " + e.getMessage());
+        }
+    }
+
+    @GetMapping("/client/{clientId}")
+    public ResponseEntity<List<CertificateResponse>> getCertificatesByClientId(
+            @PathVariable String clientId) {
+        log.info("Received request to get certificates for client: {}", clientId);
+        List<CertificateResponse> certificates = certificateService.getCertificatesByClientId(clientId);
+        return ResponseEntity.ok(certificates);
+    }
+
+    @GetMapping("/lookup")
+    public ResponseEntity<?> getCertificateByClientIdAndCertText(
+            @RequestParam String clientId,
+            @RequestParam String certText) {
+        try {
+            log.info("Received request to lookup certificate for client: {}", clientId);
+            Optional<CertificateResponse> certificate = certificateService
+                .getCertificateByClientIdAndCertText(clientId, certText);
+            
+            if (certificate.isPresent()) {
+                return ResponseEntity.ok(certificate.get());
+            } else {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body("Certificate not found for the given client ID and certificate text");
+            }
+        } catch (Exception e) {
+            log.error("Error retrieving certificate for client: {}", clientId, e);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body("Error retrieving certificate: " + e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<String> deleteCertificate(@PathVariable Long id) {
+        try {
+            log.info("Received request to delete certificate with id: {}", id);
+            certificateService.deleteCertificate(id);
+            return ResponseEntity.ok("Certificate deleted successfully");
+        } catch (Exception e) {
+            log.error("Error deleting certificate with id: {}", id, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error deleting certificate: " + e.getMessage());
+        }
+    }
+
+    @GetMapping("/health")
+    public ResponseEntity<String> healthCheck() {
+        return ResponseEntity.ok("Certificate service is running");
+    }
+}
+
+// src/main/java/com/damu/certificatemanager/config/RedisConfig.java
+package com.damu.certificatemanager.config;
+
+import io.lettuce.core.ReadFrom;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
+
+import java.time.Duration;
+
+@Configuration
+@Slf4j
+public class RedisConfig {
+
+    @Value("${spring.redis.master.host}")
+    private String masterHost;
+
+    @Value("${spring.redis.replica.host}")
+    private String replicaHost;
+
+    @Value("${spring.redis.port:6379}")
+    private int redisPort;
+
+    @Value("${spring.redis.password:}")
+    private String redisPassword;
+
+    @Value("${spring.redis.timeout:2000}")
+    private long timeout;
+
+    @Bean(name = "masterConnectionFactory")
+    @Primary
+    public LettuceConnectionFactory masterRedisConnectionFactory() {
+        log.info("Configuring master Redis connection to: {}:{}", masterHost, redisPort);
+        RedisStandaloneConfiguration masterConfig = new RedisStandaloneConfiguration();
+        masterConfig.setHostName(masterHost);
+        masterConfig.setPort(redisPort);
+        
+        if (!redisPassword.isEmpty()) {
+            masterConfig.setPassword(redisPassword);
+        }
+
+        LettuceClientConfiguration clientConfig = LettuceClientConfiguration.builder()
+            .commandTimeout(Duration.ofMillis(timeout))
+            .build();
+
+        return new LettuceConnectionFactory(masterConfig, clientConfig);
+    }
+
+    @Bean(name = "replicaConnectionFactory")
+    public LettuceConnectionFactory replicaRedisConnectionFactory() {
+        log.info("Configuring replica Redis connection to: {}:{}", replicaHost, redisPort);
+        RedisStandaloneConfiguration replicaConfig = new RedisStandaloneConfiguration();
+        replicaConfig.setHostName(replicaHost);
+        replicaConfig.setPort(redisPort);
+        
+        if (!redisPassword.isEmpty()) {
+            replicaConfig.setPassword(redisPassword);
+        }
+
+        LettuceClientConfiguration clientConfig = LettuceClientConfiguration.builder()
+            .readFrom(ReadFrom.REPLICA_PREFERRED)
+            .commandTimeout(Duration.ofMillis(timeout))
+            .build();
+
+        return new LettuceConnectionFactory(replicaConfig, clientConfig);
+    }
+
+    @Bean(name = "masterRedisTemplate")
+    @Primary
+    public RedisTemplate<String, String> masterRedisTemplate() {
+        RedisTemplate<String, String> template = new RedisTemplate<>();
+        template.setConnectionFactory(masterRedisConnectionFactory());
+        template.setKeySerializer(new StringRedisSerializer());
+        template.setValueSerializer(new StringRedisSerializer());
+        template.setHashKeySerializer(new StringRedisSerializer());
+        template.setHashValueSerializer(new StringRedisSerializer());
+        template.afterPropertiesSet();
+        log.info("Master Redis template configured successfully");
+        return template;
+    }
+
+    @Bean(name = "replicaRedisTemplate")
+    public RedisTemplate<String, String> replicaRedisTemplate() {
+        RedisTemplate<String, String> template = new RedisTemplate<>();
+        template.setConnectionFactory(replicaRedisConnectionFactory());
+        template.setKeySerializer(new StringRedisSerializer());
+        template.setValueSerializer(new StringRedisSerializer());
+        template.setHashKeySerializer(new StringRedisSerializer());
+        template.setHashValueSerializer(new StringRedisSerializer());
+        template.afterPropertiesSet();
+        log.info("Replica Redis template configured successfully");
+        return template;
+    }
+
+    // For backward compatibility - uses master by default
+    @Bean
+    public RedisTemplate<String, String> redisTemplate() {
+        return masterRedisTemplate();
+    }
+}
+
+// src/main/resources/application.properties
+# Server Configuration
+server.port=8080
+
+# H2 Database Configuration
+spring.datasource.url=jdbc:h2:mem:certdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+spring.datasource.driverClassName=org.h2.Driver
+spring.datasource.username=sa
+spring.datasource.password=password
+
+# JPA Configuration
+spring.jpa.database-platform=org.hibernate.dialect.H2Dialect
+spring.jpa.hibernate.ddl-auto=create-drop
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.format_sql=true
+
+# H2 Console (for development/testing)
+spring.h2.console.enabled=true
+spring.h2.console.path=/h2-console
+
+# Redis Configuration (AWS ElastiCache)
+# Replace with your actual ElastiCache endpoints
+spring.redis.master.host=your-elasticache-primary-endpoint.cache.amazonaws.com
+spring.redis.replica.host=your-elasticache-replica-endpoint.cache.amazonaws.com
+spring.redis.port=6379
+spring.redis.password=
+spring.redis.timeout=2000
+spring.redis.lettuce.pool.max-active=8
+spring.redis.lettuce.pool.max-wait=-1ms
+spring.redis.lettuce.pool.max-idle=8
+spring.redis.lettuce.pool.min-idle=0
+
+# Jackson Configuration
+spring.jackson.serialization.write-dates-as-timestamps=false
+spring.jackson.time-zone=UTC
+
+# Logging
+logging.level.com.damu.certificatemanager=INFO
+logging.level.org.springframework.data.redis=DEBUG
+logging.level.root=INFO
+Made with
+1
