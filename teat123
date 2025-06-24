@@ -1,0 +1,669 @@
+# Spring Boot Redis Cluster Certificate Manager
+
+## Project Structure
+```
+certificate-manager/
+├── pom.xml
+├── src/
+│   └── main/
+│       ├── java/
+│       │   └── com/
+│       │       └── example/
+│       │           └── certificatemanager/
+│       │               ├── CertificateManagerApplication.java
+│       │               ├── config/
+│       │               │   └── RedisConfig.java
+│       │               ├── model/
+│       │               │   └── Certificate.java
+│       │               ├── service/
+│       │               │   └── CertificateService.java
+│       │               └── controller/
+│       │                   └── CertificateController.java
+│       └── resources/
+│           └── application.yml
+└── README.md
+```
+
+## 1. pom.xml
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.0</version>
+        <relativePath/>
+    </parent>
+    
+    <groupId>com.example</groupId>
+    <artifactId>certificate-manager</artifactId>
+    <version>1.0.0</version>
+    <name>certificate-manager</name>
+    <description>Spring Boot app for managing certificates with Redis cluster</description>
+    
+    <properties>
+        <java.version>17</java.version>
+    </properties>
+    
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+        </dependency>
+        
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
+        
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+```
+
+## 2. application.yml
+```yaml
+server:
+  port: 8080
+
+spring:
+  application:
+    name: certificate-manager
+  
+  data:
+    redis:
+      cluster:
+        nodes:
+          - localhost:7000
+          - localhost:7001
+          - localhost:7002
+          - localhost:7003
+          - localhost:7004
+          - localhost:7005
+        max-redirects: 3
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+          max-wait: -1ms
+
+logging:
+  level:
+    com.example.certificatemanager: DEBUG
+    org.springframework.data.redis: DEBUG
+```
+
+## 3. CertificateManagerApplication.java
+```java
+package com.example.certificatemanager;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class CertificateManagerApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(CertificateManagerApplication.class, args);
+    }
+}
+```
+
+## 4. RedisConfig.java
+```java
+package com.example.certificatemanager.config;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.connection.RedisClusterConfiguration;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
+
+import java.util.List;
+
+@Configuration
+public class RedisConfig {
+
+    @Value("${spring.data.redis.cluster.nodes}")
+    private List<String> clusterNodes;
+
+    @Value("${spring.data.redis.cluster.max-redirects}")
+    private int maxRedirects;
+
+    @Bean
+    public RedisConnectionFactory redisConnectionFactory() {
+        RedisClusterConfiguration clusterConfiguration = new RedisClusterConfiguration(clusterNodes);
+        clusterConfiguration.setMaxRedirects(maxRedirects);
+        
+        return new LettuceConnectionFactory(clusterConfiguration);
+    }
+
+    @Bean
+    public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory connectionFactory) {
+        RedisTemplate<String, Object> template = new RedisTemplate<>();
+        template.setConnectionFactory(connectionFactory);
+        
+        // Use String serializer for keys
+        template.setKeySerializer(new StringRedisSerializer());
+        template.setHashKeySerializer(new StringRedisSerializer());
+        
+        // Use JSON serializer for values
+        template.setValueSerializer(new GenericJackson2JsonRedisSerializer());
+        template.setHashValueSerializer(new GenericJackson2JsonRedisSerializer());
+        
+        template.afterPropertiesSet();
+        return template;
+    }
+}
+```
+
+## 5. Certificate.java
+```java
+package com.example.certificatemanager.model;
+
+import com.fasterxml.jackson.annotation.JsonFormat;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
+import java.io.Serializable;
+import java.time.LocalDateTime;
+
+public class Certificate implements Serializable {
+    
+    @NotBlank(message = "Certificate ID cannot be blank")
+    private String id;
+    
+    @NotBlank(message = "Certificate name cannot be blank")
+    private String name;
+    
+    @NotBlank(message = "Certificate content cannot be blank")
+    private String content;
+    
+    @NotBlank(message = "Issuer cannot be blank")
+    private String issuer;
+    
+    @NotNull(message = "Issue date cannot be null")
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime issueDate;
+    
+    @NotNull(message = "Expiry date cannot be null")
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime expiryDate;
+    
+    private String algorithm;
+    private String serialNumber;
+    
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime createdAt;
+    
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime updatedAt;
+
+    public Certificate() {
+        this.createdAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public Certificate(String id, String name, String content, String issuer, 
+                      LocalDateTime issueDate, LocalDateTime expiryDate) {
+        this();
+        this.id = id;
+        this.name = name;
+        this.content = content;
+        this.issuer = issuer;
+        this.issueDate = issueDate;
+        this.expiryDate = expiryDate;
+    }
+
+    // Getters and Setters
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
+
+    public String getName() { return name; }
+    public void setName(String name) { 
+        this.name = name;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public String getContent() { return content; }
+    public void setContent(String content) { 
+        this.content = content;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public String getIssuer() { return issuer; }
+    public void setIssuer(String issuer) { 
+        this.issuer = issuer;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public LocalDateTime getIssueDate() { return issueDate; }
+    public void setIssueDate(LocalDateTime issueDate) { 
+        this.issueDate = issueDate;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public LocalDateTime getExpiryDate() { return expiryDate; }
+    public void setExpiryDate(LocalDateTime expiryDate) { 
+        this.expiryDate = expiryDate;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public String getAlgorithm() { return algorithm; }
+    public void setAlgorithm(String algorithm) { 
+        this.algorithm = algorithm;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public String getSerialNumber() { return serialNumber; }
+    public void setSerialNumber(String serialNumber) { 
+        this.serialNumber = serialNumber;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    @Override
+    public String toString() {
+        return "Certificate{" +
+                "id='" + id + '\'' +
+                ", name='" + name + '\'' +
+                ", issuer='" + issuer + '\'' +
+                ", issueDate=" + issueDate +
+                ", expiryDate=" + expiryDate +
+                ", algorithm='" + algorithm + '\'' +
+                ", serialNumber='" + serialNumber + '\'' +
+                ", createdAt=" + createdAt +
+                ", updatedAt=" + updatedAt +
+                '}';
+    }
+}
+```
+
+## 6. CertificateService.java
+```java
+package com.example.certificatemanager.service;
+
+import com.example.certificatemanager.model.Certificate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+
+@Service
+public class CertificateService {
+    
+    private static final Logger logger = LoggerFactory.getLogger(CertificateService.class);
+    private static final String CERTIFICATE_KEY_PREFIX = "certificate:";
+    
+    @Autowired
+    private RedisTemplate<String, Object> redisTemplate;
+    
+    public void saveCertificate(Certificate certificate) {
+        try {
+            String key = CERTIFICATE_KEY_PREFIX + certificate.getId();
+            certificate.setUpdatedAt(LocalDateTime.now());
+            redisTemplate.opsForValue().set(key, certificate);
+            
+            // Set expiration based on certificate expiry date (optional)
+            if (certificate.getExpiryDate() != null) {
+                long secondsUntilExpiry = java.time.Duration.between(
+                    LocalDateTime.now(), certificate.getExpiryDate()).getSeconds();
+                if (secondsUntilExpiry > 0) {
+                    redisTemplate.expire(key, secondsUntilExpiry, TimeUnit.SECONDS);
+                }
+            }
+            
+            logger.info("Certificate saved successfully with ID: {}", certificate.getId());
+        } catch (Exception e) {
+            logger.error("Error saving certificate with ID: {}", certificate.getId(), e);
+            throw new RuntimeException("Failed to save certificate", e);
+        }
+    }
+    
+    public Certificate getCertificate(String id) {
+        try {
+            String key = CERTIFICATE_KEY_PREFIX + id;
+            Object result = redisTemplate.opsForValue().get(key);
+            
+            if (result instanceof Certificate) {
+                logger.info("Certificate retrieved successfully with ID: {}", id);
+                return (Certificate) result;
+            }
+            
+            logger.warn("Certificate not found with ID: {}", id);
+            return null;
+        } catch (Exception e) {
+            logger.error("Error retrieving certificate with ID: {}", id, e);
+            throw new RuntimeException("Failed to retrieve certificate", e);
+        }
+    }
+    
+    public boolean deleteCertificate(String id) {
+        try {
+            String key = CERTIFICATE_KEY_PREFIX + id;
+            Boolean deleted = redisTemplate.delete(key);
+            
+            if (Boolean.TRUE.equals(deleted)) {
+                logger.info("Certificate deleted successfully with ID: {}", id);
+                return true;
+            } else {
+                logger.warn("Certificate not found for deletion with ID: {}", id);
+                return false;
+            }
+        } catch (Exception e) {
+            logger.error("Error deleting certificate with ID: {}", id, e);
+            throw new RuntimeException("Failed to delete certificate", e);
+        }
+    }
+    
+    public List<Certificate> getAllCertificates() {
+        try {
+            Set<String> keys = redisTemplate.keys(CERTIFICATE_KEY_PREFIX + "*");
+            List<Certificate> certificates = new ArrayList<>();
+            
+            if (keys != null && !keys.isEmpty()) {
+                List<Object> values = redisTemplate.opsForValue().multiGet(keys);
+                if (values != null) {
+                    for (Object value : values) {
+                        if (value instanceof Certificate) {
+                            certificates.add((Certificate) value);
+                        }
+                    }
+                }
+            }
+            
+            logger.info("Retrieved {} certificates", certificates.size());
+            return certificates;
+        } catch (Exception e) {
+            logger.error("Error retrieving all certificates", e);
+            throw new RuntimeException("Failed to retrieve certificates", e);
+        }
+    }
+    
+    public boolean certificateExists(String id) {
+        try {
+            String key = CERTIFICATE_KEY_PREFIX + id;
+            return Boolean.TRUE.equals(redisTemplate.hasKey(key));
+        } catch (Exception e) {
+            logger.error("Error checking certificate existence with ID: {}", id, e);
+            return false;
+        }
+    }
+    
+    public List<Certificate> getExpiringCertificates(int daysFromNow) {
+        List<Certificate> allCertificates = getAllCertificates();
+        List<Certificate> expiringCertificates = new ArrayList<>();
+        LocalDateTime cutoffDate = LocalDateTime.now().plusDays(daysFromNow);
+        
+        for (Certificate cert : allCertificates) {
+            if (cert.getExpiryDate() != null && 
+                cert.getExpiryDate().isBefore(cutoffDate) && 
+                cert.getExpiryDate().isAfter(LocalDateTime.now())) {
+                expiringCertificates.add(cert);
+            }
+        }
+        
+        logger.info("Found {} certificates expiring within {} days", 
+                   expiringCertificates.size(), daysFromNow);
+        return expiringCertificates;
+    }
+}
+```
+
+## 7. CertificateController.java
+```java
+package com.example.certificatemanager.controller;
+
+import com.example.certificatemanager.model.Certificate;
+import com.example.certificatemanager.service.CertificateService;
+import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/certificates")
+public class CertificateController {
+    
+    @Autowired
+    private CertificateService certificateService;
+    
+    @PostMapping
+    public ResponseEntity<?> createCertificate(@Valid @RequestBody Certificate certificate) {
+        try {
+            if (certificateService.certificateExists(certificate.getId())) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Certificate with ID " + certificate.getId() + " already exists");
+            }
+            
+            certificateService.saveCertificate(certificate);
+            return ResponseEntity.status(HttpStatus.CREATED).body(certificate);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error creating certificate: " + e.getMessage());
+        }
+    }
+    
+    @GetMapping("/{id}")
+    public ResponseEntity<?> getCertificate(@PathVariable String id) {
+        try {
+            Certificate certificate = certificateService.getCertificate(id);
+            if (certificate != null) {
+                return ResponseEntity.ok(certificate);
+            } else {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body("Certificate not found with ID: " + id);
+            }
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error retrieving certificate: " + e.getMessage());
+        }
+    }
+    
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updateCertificate(@PathVariable String id, 
+                                             @Valid @RequestBody Certificate certificate) {
+        try {
+            if (!certificateService.certificateExists(id)) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body("Certificate not found with ID: " + id);
+            }
+            
+            certificate.setId(id);
+            certificateService.saveCertificate(certificate);
+            return ResponseEntity.ok(certificate);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error updating certificate: " + e.getMessage());
+        }
+    }
+    
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteCertificate(@PathVariable String id) {
+        try {
+            boolean deleted = certificateService.deleteCertificate(id);
+            if (deleted) {
+                return ResponseEntity.ok("Certificate deleted successfully");
+            } else {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body("Certificate not found with ID: " + id);
+            }
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error deleting certificate: " + e.getMessage());
+        }
+    }
+    
+    @GetMapping
+    public ResponseEntity<?> getAllCertificates() {
+        try {
+            List<Certificate> certificates = certificateService.getAllCertificates();
+            return ResponseEntity.ok(certificates);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error retrieving certificates: " + e.getMessage());
+        }
+    }
+    
+    @GetMapping("/expiring/{days}")
+    public ResponseEntity<?> getExpiringCertificates(@PathVariable int days) {
+        try {
+            List<Certificate> expiringCertificates = certificateService.getExpiringCertificates(days);
+            return ResponseEntity.ok(expiringCertificates);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error retrieving expiring certificates: " + e.getMessage());
+        }
+    }
+    
+    @GetMapping("/health")
+    public ResponseEntity<String> healthCheck() {
+        return ResponseEntity.ok("Certificate Manager is running");
+    }
+}
+```
+
+## Setup Script
+
+Create a shell script `setup-project.sh`:
+
+```bash
+#!/bin/bash
+
+# Create project directory
+mkdir -p certificate-manager
+cd certificate-manager
+
+# Create directory structure
+mkdir -p src/main/java/com/example/certificatemanager/{config,model,service,controller}
+mkdir -p src/main/resources
+mkdir -p src/test/java
+
+# Create pom.xml (copy content from above)
+# Create application.yml (copy content from above)
+# Create Java files (copy content from above)
+
+echo "Project structure created successfully!"
+echo "To run the application:"
+echo "1. Navigate to certificate-manager directory"
+echo "2. Run: mvn clean install"
+echo "3. Run: mvn spring-boot:run"
+echo ""
+echo "Make sure Redis cluster is running on the configured ports!"
+```
+
+## Redis Cluster Setup
+
+To set up a Redis cluster for testing:
+
+```bash
+# Create cluster configuration
+mkdir redis-cluster
+cd redis-cluster
+
+# Create 6 Redis instances (3 masters, 3 replicas)
+for port in 7000 7001 7002 7003 7004 7005; do
+  mkdir $port
+  cat > $port/redis.conf << EOF
+port $port
+cluster-enabled yes
+cluster-config-file nodes.conf
+cluster-node-timeout 5000
+appendonly yes
+bind 0.0.0.0
+EOF
+done
+
+# Start Redis instances
+for port in 7000 7001 7002 7003 7004 7005; do
+  redis-server $port/redis.conf --daemonize yes
+done
+
+# Create cluster
+redis-cli --cluster create 127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002 127.0.0.1:7003 127.0.0.1:7004 127.0.0.1:7005 --cluster-replicas 1
+```
+
+## API Endpoints
+
+- `POST /api/certificates` - Create a new certificate
+- `GET /api/certificates/{id}` - Get certificate by ID
+- `PUT /api/certificates/{id}` - Update certificate
+- `DELETE /api/certificates/{id}` - Delete certificate
+- `GET /api/certificates` - Get all certificates
+- `GET /api/certificates/expiring/{days}` - Get certificates expiring within specified days
+- `GET /api/certificates/health` - Health check
+
+## Sample Certificate JSON
+
+```json
+{
+  "id": "cert-001",
+  "name": "SSL Certificate for example.com",
+  "content": "-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----",
+  "issuer": "Let's Encrypt Authority X3",
+  "issueDate": "2024-01-01 10:00:00",
+  "expiryDate": "2024-12-31 23:59:59",
+  "algorithm": "SHA256withRSA",
+  "serialNumber": "ABC123456789"
+}
+```
+
+This application provides a complete solution for managing certificates in a Redis cluster with master-replica configuration.
