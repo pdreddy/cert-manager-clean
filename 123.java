@@ -9,8 +9,8 @@ import io.lettuce.core.ClientOptions;
 
 public class RedisLettuceExample {
     // Configuration constants
-    private static final String MASTER_ENDPOINT = "master.aci-redis-ddbs-pdr-d.ydhdvl.use1.cache.amazonaws.com";
-    private static final String REPLICA_ENDPOINT = "replica.aci-redis-ddbs-pdr-d.ydhdvl.use1.cache.amazonaws.com";
+    private static final String MASTER_ENDPOINT = "vvvvv1.cache.amazonaws.com";
+    private static final String REPLICA_ENDPOINT = "rzzzzzl.use1.cache.amazonaws.com";
     private static final String CONFIG_ENDPOINT = "<configuration-endpoint>"; // Replace with actual config endpoint if cluster mode enabled
     private static final int PORT = 6379;
     private static final String PASSWORD = "<your-password>"; // Replace with auth token if enabled, or null if not
