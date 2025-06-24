@@ -848,3 +848,79 @@ public class RedisTemplateOperations {
         }
     }
 }
+
+
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import io.lettuce.core.api.sync.RedisCommands;
+
+import java.time.Duration;
+
+public class RedisTemplateOperations {
+    public static void main(String[] args) {
+        // Replace with your ElastiCache endpoint and password
+        String redisHost = "your-elasticache-endpoint.cache.amazonaws.com"; // e.g., myredis.abcdef.0001.use1.cache.amazonaws.com
+        String redisPassword = "your_redis_password";
+
+        // Configure Redis standalone connection
+        RedisStandaloneConfiguration redisConfig = new RedisStandaloneConfiguration();
+        redisConfig.setHostName(redisHost);
+        redisConfig.setPort(6379);
+        redisConfig.setPassword(redisPassword);
+
+        // Configure Lettuce client with TLS
+        LettuceConnectionFactory connectionFactory = new LettuceConnectionFactory(redisConfig, 
+            LettuceClientConfiguration.builder()
+                .useSsl()
+                .commandTimeout(Duration.ofSeconds(10))
+                .build()
+        );
+        connectionFactory.afterPropertiesSet();
+
+        // Create StringRedisTemplate
+        StringRedisTemplate redisTemplate = new StringRedisTemplate();
+        redisTemplate.setConnectionFactory(connectionFactory);
+        redisTemplate.afterPropertiesSet();
+
+        try {
+            // Save text
+            String key = "greeting";
+            String value = "hello java";
+            redisTemplate.opsForValue().set(key, value);
+            System.out.println("Saved: " + key + " = " + value);
+
+            // Fetch text
+            String fetchedValue = redisTemplate.opsForValue().get(key);
+            System.out.println("Fetched: " + key + " = " + fetchedValue);
+
+            // Fetch server details using INFO command
+            String serverInfo = redisTemplate.execute((RedisConnection connection) -> {
+                RedisCommands<String, String> commands = ((io.lettuce.core.api.StatefulRedisConnection) connection.getNativeConnection()).sync();
+                return commands.info("server");
+            });
+            System.out.println("\nServer Info:\n" + serverInfo);
+
+            String memoryInfo = redisTemplate.execute((RedisConnection connection) -> {
+                RedisCommands<String, String> commands = ((io.lettuce.core.api.StatefulRedisConnection) connection.getNativeConnection()).sync();
+                return commands.info("memory");
+            });
+            System.out.println("Memory Info:\n" + memoryInfo);
+
+            // Delete text
+            Boolean deleted = redisTemplate.delete(key);
+            System.out.println("Deleted key '" + key + "': " + (deleted ? "Success" : "Key not found"));
+
+            // Verify deletion
+            String afterDelete = redisTemplate.opsForValue().get(key);
+            System.out.println("After deletion, " + key + " = " + (afterDelete != null ? afterDelete : "null"));
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            // Clean up
+            connectionFactory.destroy();
+        }
+    }
+}
