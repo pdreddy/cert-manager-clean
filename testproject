@@ -731,4 +731,45 @@ logging.level.com.damu.certificatemanager=INFO
 logging.level.org.springframework.data.redis=DEBUG
 logging.level.root=INFO
 Made with
-1
+
+
+
+
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.api.StatefulRedisConnection;
+import io.lettuce.core.api.sync.RedisCommands;
+
+public class RedisLettuceDetails {
+    public static void main(String[] args) {
+        // Replace with your ElastiCache endpoint and password
+        String redisHost = "your-elasticache-endpoint.cache.amazonaws.com"; // e.g., myredis.abcdef.0001.use1.cache.amazonaws.com
+        String redisPassword = "your_redis_password";
+
+        // Create Redis URI with TLS and authentication
+        String redisUri = String.format("rediss://:%s@%s:6379", redisPassword, redisHost);
+
+        // Create Redis client
+        RedisClient redisClient = RedisClient.create(redisUri);
+
+        try (StatefulRedisConnection<String, String> connection = redisClient.connect()) {
+            // Get synchronous commands
+            RedisCommands<String, String> syncCommands = connection.sync();
+
+            // Fetch server details using INFO command
+            String info = syncCommands.info();
+            System.out.println("Redis Server Info:\n" + info);
+
+            // Optionally, fetch specific section, e.g., Server or Memory
+            String serverInfo = syncCommands.info("server");
+            System.out.println("\nServer Section:\n" + serverInfo);
+
+            String memoryInfo = syncCommands.info("memory");
+            System.out.println("\nMemory Section:\n" + memoryInfo);
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            // Shutdown the client
+            redisClient.shutdown();
+        }
+    }
+}
