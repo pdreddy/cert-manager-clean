@@ -1,69 +1,88 @@
-package com.example.certificatebatch.config;
+package com.example.batch.config;
 
-import com.example.certificatebatch.tasklet.CertificateCleanupTasklet;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.JobParameters;
 import org.springframework.batch.core.JobParametersBuilder;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
-import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
-import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.batch.repeat.RepeatStatus;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.transaction.PlatformTransactionManager;
+
+import java.time.LocalDate;
+import java.util.List;
 
 @Configuration
 @EnableBatchProcessing
 @EnableScheduling
-public class JobConfig {
+public class CertificateCleanupJobConfig {
 
     @Autowired
-    private JobBuilderFactory jobBuilderFactory;
+    private JobRepository jobRepository;
 
     @Autowired
-    private StepBuilderFactory stepBuilderFactory;
+    private PlatformTransactionManager transactionManager;
 
     @Autowired
     private JobLauncher jobLauncher;
 
     @Autowired
-    private CertificateCleanupTasklet certificateCleanupTasklet;
+    private RedisTemplate<String, Object> redisTemplate;
 
-    /**
-     * Step that executes the certificate cleanup tasklet
-     */
-    @Bean
-    public Step certificateCleanupStep() {
-        return stepBuilderFactory.get("certificateCleanupStep")
-                .tasklet(certificateCleanupTasklet)
-                .build();
-    }
-
-    /**
-     * Job definition with a single cleanup step
-     */
-    @Bean
-    public Job certificateCleanupJob() {
-        return jobBuilderFactory.get("certificateCleanupJob")
-                .start(certificateCleanupStep())
-                .build();
-    }
-
-    /**
-     * Scheduler that runs every 1 minute
-     */
     @Autowired
-    private Job certificateCleanupJob;
+    private CertificateRepository certificateRepository;
 
-    @Scheduled(fixedRate = 60000) // every 60 seconds
-    public void runJobEveryMinute() throws Exception {
+    // Step definition
+    @Bean
+    public Step deleteExpiredCertificatesStep() {
+        return new StepBuilder("deleteExpiredCertificatesStep", jobRepository)
+                .tasklet((contribution, chunkContext) -> {
+                    LocalDate yesterday = LocalDate.now().minusDays(1);
+
+                    // 1. Fetch expired certificates
+                    List<Certificate> expired = certificateRepository.findByExpiryDate(yesterday);
+                    System.out.println("Found expired certificates: " + expired.size());
+
+                    // 2. Delete from DB
+                    certificateRepository.deleteAll(expired);
+                    System.out.println("Deleted expired certificates from DB.");
+
+                    // 3. Delete from Redis
+                    expired.forEach(cert -> {
+                        String key = "cert:" + cert.getId();
+                        redisTemplate.delete(key);
+                        System.out.println("Deleted cache key: " + key);
+                    });
+
+                    return RepeatStatus.FINISHED;
+                }, transactionManager)
+                .build();
+    }
+
+    // Job definition
+    @Bean
+    public Job deleteExpiredCertificatesJob() {
+        return new JobBuilder("deleteExpiredCertificatesJob", jobRepository)
+                .start(deleteExpiredCertificatesStep())
+                .build();
+    }
+
+    // Scheduler to launch the job every minute
+    @Scheduled(fixedRate = 60000)
+    public void runJob() throws Exception {
         JobParameters params = new JobParametersBuilder()
-                .addLong("time", System.currentTimeMillis()) // unique run
+                .addLong("time", System.currentTimeMillis()) // ensures uniqueness
                 .toJobParameters();
 
-        jobLauncher.run(certificateCleanupJob, params);
+        jobLauncher.run(deleteExpiredCertificatesJob(), params);
     }
 }
