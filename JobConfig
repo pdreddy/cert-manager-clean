@@ -1,0 +1,69 @@
+package com.example.certificatebatch.config;
+
+import com.example.certificatebatch.tasklet.CertificateCleanupTasklet;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.batch.core.JobParametersBuilder;
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
+import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
+import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.scheduling.annotation.Scheduled;
+
+@Configuration
+@EnableBatchProcessing
+@EnableScheduling
+public class JobConfig {
+
+    @Autowired
+    private JobBuilderFactory jobBuilderFactory;
+
+    @Autowired
+    private StepBuilderFactory stepBuilderFactory;
+
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Autowired
+    private CertificateCleanupTasklet certificateCleanupTasklet;
+
+    /**
+     * Step that executes the certificate cleanup tasklet
+     */
+    @Bean
+    public Step certificateCleanupStep() {
+        return stepBuilderFactory.get("certificateCleanupStep")
+                .tasklet(certificateCleanupTasklet)
+                .build();
+    }
+
+    /**
+     * Job definition with a single cleanup step
+     */
+    @Bean
+    public Job certificateCleanupJob() {
+        return jobBuilderFactory.get("certificateCleanupJob")
+                .start(certificateCleanupStep())
+                .build();
+    }
+
+    /**
+     * Scheduler that runs every 1 minute
+     */
+    @Autowired
+    private Job certificateCleanupJob;
+
+    @Scheduled(fixedRate = 60000) // every 60 seconds
+    public void runJobEveryMinute() throws Exception {
+        JobParameters params = new JobParametersBuilder()
+                .addLong("time", System.currentTimeMillis()) // unique run
+                .toJobParameters();
+
+        jobLauncher.run(certificateCleanupJob, params);
+    }
+}
