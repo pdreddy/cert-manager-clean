@@ -1,6 +1,7 @@
-package com.example.batch;
+package com.example.batch.config;
 
-import jakarta.persistence.*;
+import com.example.batch.entity.Certificate;
+import com.example.batch.service.CertificateCleanupService;
 import org.springframework.batch.core.*;
 import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
 import org.springframework.batch.core.job.builder.JobBuilder;
@@ -8,121 +9,54 @@ import org.springframework.batch.core.launch.JobLauncher;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.item.*;
-import org.springframework.batch.item.support.ListItemReader;
-import org.springframework.batch.item.support.builder.ListItemReaderBuilder;
 import org.springframework.batch.support.transaction.ResourcelessTransactionManager;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.CommandLineRunner;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.*;
-import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.PlatformTransactionManager;
 
-import java.time.LocalDate;
 import java.util.List;
 
-@SpringBootApplication
+@Configuration
 @EnableBatchProcessing
 @EnableScheduling
-public class BatchApplication implements CommandLineRunner {
+public class BatchConfig {
 
-    public static void main(String[] args) {
-        SpringApplication.run(BatchApplication.class, args);
-    }
+    private final CertificateCleanupService cleanupService;
 
-    @Autowired
-    private CertificateRepository certificateRepository;
-
-    @Autowired
-    private JobLauncher jobLauncher;
-
-    @Autowired
-    private Job certificateCleanupJob;
-
-    @Override
-    public void run(String... args) {
-        // Insert sample data
-        certificateRepository.save(new Certificate("client1", "CERT-AAA", LocalDate.now().minusDays(5)));
-        certificateRepository.save(new Certificate("client2", "CERT-BBB", LocalDate.now().plusDays(10)));
-        certificateRepository.save(new Certificate("client3", "CERT-CCC", LocalDate.now().minusDays(1)));
-
-        System.out.println("=== Initial DB Records ===");
-        certificateRepository.findAll().forEach(System.out::println);
-    }
-
-    // Schedule job every 30s (for demo, change to midnight cron in prod)
-    @Scheduled(fixedRate = 30000)
-    public void runBatchJob() throws Exception {
-        JobParameters params = new JobParametersBuilder()
-                .addLong("time", System.currentTimeMillis())
-                .toJobParameters();
-        jobLauncher.run(certificateCleanupJob, params);
+    public BatchConfig(CertificateCleanupService cleanupService) {
+        this.cleanupService = cleanupService;
     }
 
     @Bean
     public Job certificateCleanupJob(JobRepository jobRepository, PlatformTransactionManager transactionManager) {
         return new JobBuilder("certificateCleanupJob", jobRepository)
                 .start(new StepBuilder("deleteExpiredCertificatesStep", jobRepository)
-                        .<Certificate, Certificate>chunk(5, transactionManager)
+                        .<Certificate, Certificate>chunk(10, transactionManager)
                         .reader(certificateItemReader())
-                        .processor(cert -> {
-                            System.out.println("Deleting expired cert: " + cert);
-                            return cert;
-                        })
-                        .writer(items -> certificateRepository.deleteAll(items))
+                        .processor(cert -> cert)
+                        .writer(items -> cleanupService.deleteCertificates(items))
                         .build())
                 .build();
     }
 
     @Bean
     public ItemReader<Certificate> certificateItemReader() {
-        List<Certificate> expired = certificateRepository.findByExpiryDateBefore(LocalDate.now());
-        return new ListItemReaderBuilder<Certificate>()
-                .name("expiredCertReader")
-                .list(expired)
-                .build();
+        List<Certificate> expired = cleanupService.findExpiredCertificates();
+        return new ListItemReader<>(expired);
     }
 
     @Bean
     public PlatformTransactionManager transactionManager() {
         return new ResourcelessTransactionManager();
     }
-}
 
-@Entity
-class Certificate {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-    private String clientId;
-    private String certData;
-    private LocalDate expiryDate;
-
-    public Certificate() {}
-    public Certificate(String clientId, String certData, LocalDate expiryDate) {
-        this.clientId = clientId;
-        this.certData = certData;
-        this.expiryDate = expiryDate;
+    // Run every midnight
+    @Scheduled(cron = "0 0 0 * * ?")
+    public void runBatchJob(JobLauncher jobLauncher, Job certificateCleanupJob) throws Exception {
+        JobParameters params = new JobParametersBuilder()
+                .addLong("time", System.currentTimeMillis())
+                .toJobParameters();
+        jobLauncher.run(certificateCleanupJob, params);
     }
-    public Long getId() { return id; }
-    public String getClientId() { return clientId; }
-    public String getCertData() { return certData; }
-    public LocalDate getExpiryDate() { return expiryDate; }
-
-    @Override
-    public String toString() {
-        return "Certificate{" +
-                "id=" + id +
-                ", clientId='" + clientId + '\'' +
-                ", certData='" + certData + '\'' +
-                ", expiryDate=" + expiryDate +
-                '}';
-    }
-}
-
-interface CertificateRepository extends JpaRepository<Certificate, Long> {
-    List<Certificate> findByExpiryDateBefore(LocalDate date);
 }
